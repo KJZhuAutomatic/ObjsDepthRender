@@ -13,6 +13,7 @@ from tqdm import tqdm
 
 from options.scene_render_options import SceneRenderOptions
 from utils import mesh_utils, vis_utils
+import random
 
 def add_table_mesh(meshes_list, trans=np.array([None]), scale=1.):
     table_mesh = o3d.geometry.TriangleMesh()
@@ -46,7 +47,7 @@ def add_table_mesh(meshes_list, trans=np.array([None]), scale=1.):
     meshes_list.append(table_mesh)
     return meshes_list
 
-def depth_render(meshes_list, cam_param, output_name='Data/test',
+def depth_render(meshes_list, cam_param, output_name='Data/test', anno_id = "0000",
                 depth_scale=1000, width=1280, height=720, is_offscreen=False):
     if is_offscreen:
         vis = o3d.visualization.rendering.OffscreenRenderer(width=width, height=height)
@@ -65,25 +66,24 @@ def depth_render(meshes_list, cam_param, output_name='Data/test',
         for mesh in meshes_list:
             vis.add_geometry(mesh)
 
-    depth_name = output_name + '_depth.png'
-    depth_name_offscreen = output_name + '_depth.tif'
-    rgb_name = output_name + '_rgb.png'
-    if is_offscreen:
-        depth_image = vis.render_to_depth_image()   # Pixels range from 0 (near plane) to 1 (far plane); 
-                                                    # different from commonly used depth map
-        depth_image_np = np.asarray(depth_image) * depth_scale
-        depth_image_np = depth_image_np.astype(np.uint16)
-        depth_image_pil = Image.fromarray(depth_image_np)
-        depth_image_pil.save(depth_name_offscreen)
+    depth_name = output_name + 'depth/' 
+    if not os.path.exists(depth_name):
+        os.makedirs(depth_name)
+    depth_name = depth_name + anno_id + ".png"
+    # depth_name_offscreen = output_name + '_depth.tif'
 
-        rgb_image = vis.render_to_image()
-        o3d.io.write_image(rgb_name, rgb_image)
+    rgb_name = output_name + 'rgb/' 
+    if not os.path.exists(rgb_name):
+        os.makedirs(rgb_name)
+    rgb_name = rgb_name + anno_id + ".png"
+    if is_offscreen:
+        assert False
     else:
         ctr.convert_from_pinhole_camera_parameters(cam_param)
         ctr.set_constant_z_far(3000)    # important step
         vis.poll_events()
         vis.capture_depth_image(depth_name, do_render=True)
-        vis.capture_screen_image(rgb_name, do_render=True)
+        # vis.capture_screen_image(rgb_name, do_render=True)
 
 def label_render(meshes_list, meshes_labels_list, cam_param, output_name='Data/test',
                 depth_scale=1000, width=1280, height=720, is_offscreen=False):
@@ -122,75 +122,10 @@ def label_render(meshes_list, meshes_labels_list, cam_param, output_name='Data/t
         vis.poll_events()
         vis.capture_screen_image(label_name, do_render=False)
 
-def scene_render_linemod(meshes_path, meshes_name, scene_path, output_path='Data/', 
-                        depth_scale=1000, output_width=640, output_height=480,
-                        is_table=True, is_offscreen=False):
-    poses_path = scene_path + 'gt.yml'
-    intrinsic_path = scene_path + 'info.yml'
-    
-    with open(poses_path, 'r') as poses_yaml:
-        poses_dict = yaml.safe_load(poses_yaml)
-
-    num_frames = len(poses_dict)
-    num_meshes = len(poses_dict[0])
-
-    meshes = []
-    meshes_labels_list = []
-
-    if is_table:
-        meshes_labels_list.append(80)
-
-    for i_mesh in range(num_meshes):
-        idx_mesh = str(poses_dict[0][i_mesh]['obj_id']).zfill(2)
-        mesh_path = meshes_path + 'obj_' + idx_mesh + meshes_name
-        mesh = mesh_utils.load_mesh(mesh_path)
-        meshes.append(mesh)
-        meshes_labels_list.append(int(idx_mesh))
-
-    if is_table:
-        meshes = add_table_mesh(meshes, scale=720.)
-
-    with open(intrinsic_path, 'r') as intrinsic_yaml:
-        intrinsics = yaml.safe_load(intrinsic_yaml)
-    intrinsic_mat = intrinsics[0]['cam_K']
-
-    # get depth size
-    temp_depth = cv2.imread(scene_path + 'depth/0000.png', 2)
-    intrinsic_shape = temp_depth.shape
-
-    '''
-    K = [[focal * width, 0, width / 2 - 0.5],
-         [0, focal * width, height / 2 - 0.5],
-         [0, 0, 1]]
-    '''
-    # intrinsic_param = [intrinsic_shape[1], intrinsic_shape[0], 
-    #                    intrinsic_mat[0], intrinsic_mat[4], 
-    #                    intrinsic_shape[1] / 2 - 0.5, intrinsic_shape[0] / 2 - 0.5]
-    intrinsic_param = [intrinsic_shape[1], intrinsic_shape[0],
-                       (intrinsic_mat[0] / (intrinsic_mat[2] * 2)) * intrinsic_shape[1],
-                       (intrinsic_mat[4] / (intrinsic_mat[2] * 2)) * intrinsic_shape[1], 
-                       intrinsic_shape[1] / 2 - 0.5, intrinsic_shape[0] / 2 - 0.5]
-
-    cam_param = vis_utils.get_camera_parameters(intrinsic_mat=intrinsic_param)
-
-    print('Scene: %s, number of images: %d'%(scene_path, num_frames))
-
-    for i_img in tqdm(range(num_frames)):
-        poses = poses_dict[i_img]
-
-        meshes_transed, meshes_transed_labels_list = mesh_utils.place_meshes_linemod(meshes, meshes_labels_list, poses, is_table)
-
-        output_name = output_path + str(i_img)
-        # mesh_utils.write_meshes(output_name + '.obj', meshes_transed)
-        depth_render(meshes_transed, cam_param, output_name=output_name,
-                    depth_scale=depth_scale, width=output_width, height=output_height, is_offscreen=is_offscreen)
-        label_render(meshes_transed, meshes_transed_labels_list, cam_param, output_name=output_name,
-                    depth_scale=depth_scale, width=output_width, height=output_height, is_offscreen=is_offscreen)
 
 def scene_render_graspnet(meshes_path, meshes_name, scene_path, output_path='Data/', camera='kinect',
                         depth_scale=1000, output_width=1280, output_height=720,
-                        is_table=True, is_offscreen=False):
-    scene_path = scene_path + camera + "/"
+                        is_table=True, is_offscreen=False, drop_object=False):
     poses_paths = os.listdir(scene_path + 'meta/')
     cam_pos = np.load(scene_path + 'cam0_wrt_table.npy')
     extrinsic_mat = np.linalg.inv(cam_pos).tolist()
@@ -206,16 +141,66 @@ def scene_render_graspnet(meshes_path, meshes_name, scene_path, output_path='Dat
     meshes_transed = []
     meshes_labels_list = []
     # for i_img in tqdm(range(len(poses_paths))):
+    obj_probs = np.load(
+        "/opt/data/private/graspnet_dataset/objects_probs.npy",
+        allow_pickle=True
+    ).item()
     for i_img in range(len(poses_paths)):
         meshes = []
         pose_idx = poses_paths[i_img].split('.')[0]
         pose_path = scene_path + 'meta/' + poses_paths[i_img]
         mat = sio.loadmat(pose_path)
-        poses = mat['poses']
+        poses = mat['poses'] # (3, 4, N_obj)
+        idx_meshes = mat['cls_indexes'] # (1, N_obj)
+        if drop_object:    
+
+            N_obj = poses.shape[2]
+            random_drop = False
+            # 丢弃物体数量 随机从 0-N_obj//2 中选择
+
+            if random_drop:
+                # 随机决定丢弃数量
+                num_drop = random.randint(0, N_obj // 2)
+
+                # 随机选择要丢弃的物体
+                drop_ids = random.sample(range(N_obj), num_drop)
+                # 保留的 index
+                keep_ids = [i for i in range(N_obj) if i not in drop_ids]
+            else:
+                num_keep = N_obj // 2
+
+                probs = []
+                for idx in idx_meshes.flatten():
+                    probs.append(obj_probs[idx])
+                # probs 一个概率列表 ，归一化 然后采样 
+                # 列表长度是 N_obj    从range(N_obj)采样 num_keep 个
+                probs = np.array(probs, dtype=np.float64)
+                temperature = 0.5  # <1 更偏向大概率
+                probs = probs ** (1 / temperature)
+                probs = probs / probs.sum()
+                keep_ids = np.random.choice(N_obj, num_keep, replace=False, p=probs)
+                keep_ids = keep_ids.tolist()
+            
+            # 更新 poses 和 idx_meshes
+            poses_new = poses[:, :, keep_ids]
+            idx_meshes_new = idx_meshes[:, keep_ids]
+
+            # 保存路径
+            output_pose_path = output_path + 'meta/'
+            os.makedirs(output_pose_path, exist_ok=True)
+
+            save_path = output_pose_path + poses_paths[i_img]
+
+            # 更新 mat
+            mat['poses'] = poses_new
+            mat['cls_indexes'] = idx_meshes_new
+
+            sio.savemat(save_path, mat)
+
+            poses = poses_new
+            idx_meshes = idx_meshes_new
 
         num_meshes = poses.shape[2]
-        
-        idx_meshes = mat['cls_indexes']
         for i_mesh in range(num_meshes):
             idx_mesh = str(idx_meshes[0][i_mesh] - 1).zfill(3)
             mesh_path = meshes_path + idx_mesh + '/' + meshes_name
@@ -231,9 +216,9 @@ def scene_render_graspnet(meshes_path, meshes_name, scene_path, output_path='Dat
         else:
             meshes_transed = mesh_utils.place_meshes_graspnet(meshes, poses)
 
-        # o3d.visualization.draw_geometries(meshes_transed)
-        output_name = output_path + pose_idx
-        depth_render(meshes_transed, cam_param, output_name=output_name,
+        o3d.visualization.draw_geometries(meshes_transed)
+        # output_name = output_path + pose_idx
+        depth_render(meshes_transed, cam_param, output_name=output_path, anno_id=pose_idx, 
                     depth_scale=depth_scale, width=output_width, height=output_height, is_offscreen=is_offscreen)
         # label_render(meshes_transed, meshes_labels_list, cam_param, output_name=output_name,
         #             depth_scale=depth_scale, width=output_width, height=output_height, is_offscreen=is_offscreen)
@@ -241,22 +226,23 @@ def scene_render_graspnet(meshes_path, meshes_name, scene_path, output_path='Dat
         print('    Image: %d, number of meshes: %d'%(i_img, num_meshes))
 
 def data_generation(opt):
-    scene_list = os.listdir(opt.root_path)
-
+    # scene_list = os.listdir(opt.root_path)
+    scene_list = ["scene_%04d"%i for i in range(80, 100)]
     # linear processing
     for i_scene in range(len(scene_list)):
-        scene_path = opt.root_path + scene_list[i_scene] + '/'
+        scene_path = opt.root_path + scene_list[i_scene] + '/' + opt.camera + '/'
         output_path = opt.output_path + scene_list[i_scene] + '/'
         if not os.path.exists(output_path):
             os.makedirs(output_path)
+        output_path = output_path +  opt.camera + '/'
+        if not os.path.exists(output_path):
+            os.makedirs(output_path)
         if opt.dataset == 'linemod':
-            scene_render_linemod(opt.meshes_path, opt.meshes_name, scene_path, output_path, 
-                                opt.depth_scale, opt.output_width, opt.output_height,
-                                opt.is_table, opt.is_offscreen)
+            assert False
         elif opt.dataset == 'graspnet':
             scene_render_graspnet(opt.meshes_path, opt.meshes_name, scene_path, output_path,
                                 opt.camera, opt.depth_scale, opt.output_width, opt.output_height,
-                                opt.is_table, opt.is_offscreen)
+                                opt.is_table, opt.is_offscreen, drop_object=False)
 if __name__ == '__main__':
     opt = SceneRenderOptions().parse()
 

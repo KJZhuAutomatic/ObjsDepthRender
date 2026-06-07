@@ -127,3 +127,15 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Rendered object images
+objects_render/
+
+# IDE
+.vscode/
+
+# Core dumps
+core
+
+# Logs
+logs/
