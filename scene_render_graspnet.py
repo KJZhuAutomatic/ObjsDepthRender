@@ -13,7 +13,6 @@ from tqdm import tqdm
 
 from options.scene_render_options import SceneRenderOptions
 from utils import mesh_utils, vis_utils
-import random
 
 def add_table_mesh(meshes_list, trans=np.array([None]), scale=1.):
     table_mesh = o3d.geometry.TriangleMesh()
@@ -125,7 +124,7 @@ def label_render(meshes_list, meshes_labels_list, cam_param, output_name='Data/t
 
 def scene_render_graspnet(meshes_path, meshes_name, scene_path, output_path='Data/', camera='kinect',
                         depth_scale=1000, output_width=1280, output_height=720,
-                        is_table=True, is_offscreen=False, drop_object=False):
+                        is_table=True, is_offscreen=False):
     poses_paths = os.listdir(scene_path + 'meta/')
     cam_pos = np.load(scene_path + 'cam0_wrt_table.npy')
     extrinsic_mat = np.linalg.inv(cam_pos).tolist()
@@ -141,10 +140,6 @@ def scene_render_graspnet(meshes_path, meshes_name, scene_path, output_path='Dat
     meshes_transed = []
     meshes_labels_list = []
     # for i_img in tqdm(range(len(poses_paths))):
-    obj_probs = np.load(
-        "/opt/data/private/graspnet_dataset/objects_probs.npy",
-        allow_pickle=True
-    ).item()
     for i_img in range(len(poses_paths)):
         meshes = []
         pose_idx = poses_paths[i_img].split('.')[0]
@@ -152,54 +147,6 @@ def scene_render_graspnet(meshes_path, meshes_name, scene_path, output_path='Dat
         mat = sio.loadmat(pose_path)
         poses = mat['poses'] # (3, 4, N_obj)
         idx_meshes = mat['cls_indexes'] # (1, N_obj)
-        if drop_object:    
-
-            N_obj = poses.shape[2]
-            random_drop = False
-            # 丢弃物体数量 随机从 0-N_obj//2 中选择
-
-            if random_drop:
-                # 随机决定丢弃数量
-                num_drop = random.randint(0, N_obj // 2)
-
-                # 随机选择要丢弃的物体
-                drop_ids = random.sample(range(N_obj), num_drop)
-                # 保留的 index
-                keep_ids = [i for i in range(N_obj) if i not in drop_ids]
-            else:
-                num_keep = N_obj // 2
-
-                probs = []
-                for idx in idx_meshes.flatten():
-                    probs.append(obj_probs[idx])
-                # probs 一个概率列表 ，归一化 然后采样 
-                # 列表长度是 N_obj    从range(N_obj)采样 num_keep 个
-                probs = np.array(probs, dtype=np.float64)
-                temperature = 0.5  # <1 更偏向大概率
-                probs = probs ** (1 / temperature)
-                probs = probs / probs.sum()
-                keep_ids = np.random.choice(N_obj, num_keep, replace=False, p=probs)
-                keep_ids = keep_ids.tolist()
-            
-            # 更新 poses 和 idx_meshes
-            poses_new = poses[:, :, keep_ids]
-            idx_meshes_new = idx_meshes[:, keep_ids]
-
-            # 保存路径
-            output_pose_path = output_path + 'meta/'
-            os.makedirs(output_pose_path, exist_ok=True)
-
-            save_path = output_pose_path + poses_paths[i_img]
-
-            # 更新 mat
-            mat['poses'] = poses_new
-            mat['cls_indexes'] = idx_meshes_new
-
-            sio.savemat(save_path, mat)
-
-            poses = poses_new
-            idx_meshes = idx_meshes_new
-
         num_meshes = poses.shape[2]
         for i_mesh in range(num_meshes):
             idx_mesh = str(idx_meshes[0][i_mesh] - 1).zfill(3)
@@ -216,7 +163,7 @@ def scene_render_graspnet(meshes_path, meshes_name, scene_path, output_path='Dat
         else:
             meshes_transed = mesh_utils.place_meshes_graspnet(meshes, poses)
 
-        o3d.visualization.draw_geometries(meshes_transed)
+        # o3d.visualization.draw_geometries(meshes_transed)  # 调试用，会上线阻塞窗口
         # output_name = output_path + pose_idx
         depth_render(meshes_transed, cam_param, output_name=output_path, anno_id=pose_idx, 
                     depth_scale=depth_scale, width=output_width, height=output_height, is_offscreen=is_offscreen)
@@ -227,7 +174,7 @@ def scene_render_graspnet(meshes_path, meshes_name, scene_path, output_path='Dat
 
 def data_generation(opt):
     # scene_list = os.listdir(opt.root_path)
-    scene_list = ["scene_%04d"%i for i in range(80, 100)]
+    scene_list = ["scene_%04d"%i for i in range(100, 190)]
     # linear processing
     for i_scene in range(len(scene_list)):
         scene_path = opt.root_path + scene_list[i_scene] + '/' + opt.camera + '/'
@@ -242,7 +189,7 @@ def data_generation(opt):
         elif opt.dataset == 'graspnet':
             scene_render_graspnet(opt.meshes_path, opt.meshes_name, scene_path, output_path,
                                 opt.camera, opt.depth_scale, opt.output_width, opt.output_height,
-                                opt.is_table, opt.is_offscreen, drop_object=False)
+                                opt.is_table, opt.is_offscreen)
 if __name__ == '__main__':
     opt = SceneRenderOptions().parse()
 
